@@ -1,13 +1,15 @@
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
-#include <UltraSonic.h>
+// #include <UltraSonic.h>
 #include <arduino.h>
 #include <ArduinoJson.h>
+#include <NewPing.h>
 
 //ULTRASONIC
 #define TRIGGER_PIN  D6
 #define ECHO_PIN     D7
-Ultrasonic sonar(TRIGGER_PIN, ECHO_PIN);
+#define MAX_DISTANCE 30
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
 
 //WATER LEVEL
 #define waterLevel A0
@@ -25,14 +27,14 @@ float panjangWaterLevelSensor = 4.0 ; // 4.0 cm, bisa dirubah, menyesuikan denga
 #define relay D5
 
 // WiFi
-const char *ssid = "Golongan kami"; // Enter your WiFi name
-const char *password = "1sampai8";  // Enter WiFi password
+const char *ssid = "Tubes"; // Enter your WiFi name
+const char *password = "bangsatkau1";  // Enter WiFi password
 
 // MQTT Broker
 const char *mqtt_broker = "34.66.102.226";
 const char *topicUltraSonic = "tubes/ultrasonic";
 const char *topicWaterLevel = "tubes/waterlevel";
-const char *topicKondisiHardware = "tubes/kondisiHardware";
+const char *topicKondisiSensor = "tubes/kondisiSensor";
 const char *topic = "tubes/callbackRelay";
 const char *mqtt_username = "admin";
 const char *mqtt_password = "password";
@@ -43,6 +45,8 @@ char message_buff[100];
 long lastMsg = 0;
 char msg[50];
 int value = 0;
+
+bool buzzerhidup = true;
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -92,14 +96,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
   message_buff[i] = payload[i]; 
   message_buff[i] = '\0';  // We copy payload to message_buff because we can't make a string out of payload.
   
-  String msgString = String(message_buff);                                                  // Finally, converting our payload to a string so we can compare it.
+  String msgString = String(message_buff);// Finally, converting our payload to a string so we can compare it.
   // Serial.println(msgString);                                                                // Prints out the message.                                                                       // Call the JSONencoder function and pass it the doc array.
 
 
-  if (msgString == "on") {                                                                  // If the message is "on", turn on the LED.
+  if (msgString == "on") { // If the message is "on", turn on the LED.
     digitalWrite(relay, HIGH);
     digitalWrite(LED_BUILTIN, LOW);
-  } else if (msgString == "off") {                                                          // If the message is "off", turn off the LED.
+  } else if (msgString == "off") { // If the message is "off", turn off the LED.
     digitalWrite(relay, LOW);
     digitalWrite(LED_BUILTIN, HIGH);
   }
@@ -143,38 +147,57 @@ void setup() {
 void loop() {
   client.loop();
   long ketinggiAir = waterLevelFunction();
-  long distance = sonar.read();
-  digitalWrite(buzzer,HIGH);
-  delay(1000);
-  digitalWrite(buzzer,LOW);
-  delay(1000);
+  long distance = sonar.ping_cm();
 
-  if(ketinggiAir <= 0.9) {
+
+  if (distance<5){
     digitalWrite(relay, HIGH);
-    digitalWrite(LED_BUILTIN, LOW);
-  } else if (distance <=6) {
-    digitalWrite(relay, LOW);
     digitalWrite(LED_BUILTIN, HIGH);
-    
-  } else {
-    //do nothing
+    Serial.println("relay on");
+    Serial.println(ketinggiAir);
+    tone(buzzer, 600);
+    delay(500);
+    noTone(buzzer);
+    buzzerhidup=true;
+
+    //send to mqtt kondisi sensor
+    StaticJsonDocument<200> doc;
+    doc["kondisiSensor"] = "Pompa Hidup";
+    char buffer[200];
+    serializeJson(doc, buffer);
+    client.publish(topicKondisiSensor, buffer);
+    delay(1000);
 
   }
 
+  if (distance>5 && buzzerhidup == true){
+    digitalWrite(relay, LOW);
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.println("relay off");
+    Serial.println(ketinggiAir);
+    buzzerhidup=false;
+    tone(buzzer, 2000);
+    delay(500);
+    noTone(buzzer);
+    delay(200);
+    tone(buzzer, 3000);
+    delay(200);
+    noTone(buzzer);
+    delay(200);
+    tone(buzzer, 4000);
+    delay(200);
+    noTone(buzzer);
 
-  // if (distance <= 5 && ketinggiAir <= 3) {
-  //   digitalWrite(relay, LOW);
-  //   digitalWrite(LED_BUILTIN, HIGH);
-  //   // noTone(buzzer);
-  //   // delay(1000);
+    //send to mqtt kondisi sensor
+    StaticJsonDocument<200> doc;
+    doc["kondisiSensor"] = "Pompa Mati";
+    char buffer[200];
+    serializeJson(doc, buffer);
+    client.publish(topicKondisiSensor, buffer);
+    delay(1000);
+  }
 
-  // } else if (distance <= 10 && ketinggiAir > 3) {
-  //   digitalWrite(relay, HIGH);
-  //   digitalWrite(LED_BUILTIN, LOW);
-  //   // tone(buzzer, 1000);
-  //   // delay(1000);
-  // }
-
+  //send to mqtt ultrasonic
   StaticJsonDocument<200> doc;
   doc["distance"] = distance;
   Serial.print("distance: ");
@@ -184,7 +207,6 @@ void loop() {
   client.publish(topicUltraSonic, buffer);
   delay(1000);
 
- 
 }
 
 
